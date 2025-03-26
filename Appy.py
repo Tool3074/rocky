@@ -5,22 +5,19 @@ from pdfminer.high_level import extract_text
 import google.generativeai as genai
 from groq import Groq, RateLimitError as GroqRateLimitError, APIError as GroqAPIError
 from mistralai.client import MistralClient
-#from mistralai.models.chat_completion import ChatMessage
 from mistralai.exceptions import MistralAPIException, MistralConnectionException
-from openai import OpenAI, RateLimitError as OpenAIRateLimitError, APIError as OpenAIAPIError # For OpenRouter
 import json
 import io
 import logging
 import time
 import re
-import os # For potential env var usage in OpenRouter headers
 
 # --- Configuration ---
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-MAX_RETRIES = 1 # Number of retries after a rate limit error
-COOLING_PERIOD_SECONDS = 60 # Delay in seconds before retrying
+MAX_RETRIES = 1
+COOLING_PERIOD_SECONDS = 60
 
-# --- Constants for Advisory Structure (Keep these as before) ---
+# --- Constants for Advisory Structure ---
 DEPARTMENTS = [
     "Administration", "Finance & Accounts", "Training", "Procurement & Commercial",
     "Human Resource", "Information Security (InfoSec)", "Information Technology",
@@ -28,7 +25,6 @@ DEPARTMENTS = [
     "Marketing & Communication", "Mergers & Acquisitions", "Pre Sales & Sales",
     "Quality Assurance"
 ]
-# ... (rest of the constants: SUB_DEPARTMENTS, REGULATORY_RISK_THEME, etc. remain unchanged)
 SUB_DEPARTMENTS = [
     "Operations - Cash Management", "Operations - Trade Services", "Operations - Custody operations",
     "Operations - Money Market", "Operations - FX", "Operations - ALM", "Operations - Retail Banking",
@@ -51,23 +47,19 @@ W_DAYOFWEEK = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday
 M_WEEKSOFOCCURRENCEFORMONTHLY = ["First", "Second", "Third", "Fourth", "Last", "Day"]
 
 # --- Provider Choices ---
-LLM_PROVIDERS = ["Gemini", "Groq", "Mistral", "OpenRouter"]
-# Define default/recommended models for each provider
+LLM_PROVIDERS = ["Gemini", "Groq", "Mistral"]
 DEFAULT_MODELS = {
     "Gemini": "gemini-1.5-flash",
-    "Groq": "llama3-8b-8192", # Fast option on Groq
-    "Mistral": "mistral-small-latest", # Balanced option on Mistral
-    "OpenRouter": "google/gemini-flash-1.5" # Example: Use Gemini via OpenRouter
-    # Add more OpenRouter models if needed: e.g., "mistralai/mistral-7b-instruct"
+    "Groq": "llama3-8b-8192",
+    "Mistral": "mistral-small-latest"
 }
 
-# --- Helper Functions (fetch_content, extract_html_text, extract_pdf_text - remain unchanged) ---
+# --- Helper Functions ---
 def fetch_content(url):
-    """Fetches content from the URL, handling potential errors."""
     try:
         headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'}
-        response = requests.get(url, headers=headers, timeout=30, stream=True) # Use stream=True for PDFs
-        response.raise_for_status()  # Raise HTTPError for bad responses (4xx or 5xx)
+        response = requests.get(url, headers=headers, timeout=30, stream=True)
+        response.raise_for_status()
         return response
     except requests.exceptions.RequestException as e:
         st.error(f"Error fetching URL: {e}")
@@ -75,17 +67,13 @@ def fetch_content(url):
         return None
 
 def extract_html_text(response):
-    """Extracts text content from HTML response using BeautifulSoup."""
     try:
         soup = BeautifulSoup(response.content, 'html.parser')
-        # Attempt to remove common boilerplate (header, footer, nav) - this is heuristic
         for tag in soup(['header', 'footer', 'nav', 'script', 'style', 'aside']):
             tag.decompose()
-        # Get remaining text, joining paragraphs/sections
         text = ' '.join(p.get_text(strip=True) for p in soup.find_all(['p', 'div', 'article', 'section']))
-        if not text: # Fallback if specific tags yield nothing
+        if not text:
              text = soup.get_text(separator=' ', strip=True)
-        # Clean up excessive whitespace
         text = re.sub(r'\s+', ' ', text).strip()
         logging.info(f"Successfully extracted text from HTML (approx {len(text)} chars).")
         return text if text else None
@@ -95,26 +83,19 @@ def extract_html_text(response):
         return None
 
 def extract_pdf_text(response):
-    """Extracts text content from PDF response using pdfminer.six."""
     try:
-        # Read PDF content into a BytesIO object
         pdf_content = io.BytesIO(response.content)
         text = extract_text(pdf_content)
-         # Clean up excessive whitespace
         text = re.sub(r'\s+', ' ', text).strip()
         logging.info(f"Successfully extracted text from PDF (approx {len(text)} chars).")
         return text if text else None
     except Exception as e:
-        # pdfminer can raise various errors, catch broadly
         st.error(f"Error extracting text from PDF: {e}. The PDF might be image-based or corrupted.")
         logging.error(f"Error extracting text from PDF: {e}")
         return None
 
 # --- LLM Prompt Generation ---
 def create_llm_prompt(text):
-    """Creates the detailed prompt for the LLM."""
-    # Truncate text to avoid exceeding input token limits
-    # Note: 15k chars is a rough estimate; actual token count varies by model
     truncated_text = text[:15000]
     if len(text) > 15000:
         logging.warning(f"Input text truncated to 15000 characters from original {len(text)}.")
@@ -165,9 +146,7 @@ def create_llm_prompt(text):
     """
 
 # --- LLM API Call Functions ---
-
 def generate_with_gemini(prompt, api_key, model_name):
-    """Generates advisory using Google Gemini."""
     try:
         genai.configure(api_key=api_key)
         model = genai.GenerativeModel(model_name)
@@ -178,20 +157,16 @@ def generate_with_gemini(prompt, api_key, model_name):
                 temperature=0.2
             )
         )
-        # Handle potential safety blocks or empty responses
         if not response.parts:
              raise Exception(f"Gemini response blocked or empty. Feedback: {response.prompt_feedback}")
         return response.text
     except Exception as e:
-        # Specific error handling for Gemini can be added if needed
         logging.error(f"Gemini API Error: {e}")
-        # Check for potential rate limit hints (though Gemini uses quota, not simple rate limits)
         if "quota" in str(e).lower():
              raise RateLimitExceededError(f"Gemini API quota likely exceeded: {e}") from e
-        raise # Re-raise other errors
+        raise
 
 def generate_with_groq(prompt, api_key, model_name):
-    """Generates advisory using Groq."""
     try:
         client = Groq(api_key=api_key)
         chat_completion = client.chat.completions.create(
@@ -206,82 +181,36 @@ def generate_with_groq(prompt, api_key, model_name):
         raise RateLimitExceededError("Groq rate limit hit.") from e
     except GroqAPIError as e:
         logging.error(f"Groq API Error: {e}")
-        raise # Re-raise other API errors
+        raise
     except Exception as e:
         logging.error(f"Groq General Error: {e}")
         raise
 
 def generate_with_mistral(prompt, api_key, model_name):
-    """Generates advisory using Mistral AI."""
     try:
         client = MistralClient(api_key=api_key)
         chat_response = client.chat(
             model=model_name,
-            # Use a list of dictionaries directly
             messages=[{"role": "user", "content": prompt}],
             temperature=0.2,
             response_format={"type": "json_object"},
         )
-        # Handle potential empty choices list
         if not chat_response.choices:
              raise Exception("Mistral API returned an empty 'choices' list.")
         return chat_response.choices[0].message.content
     except MistralAPIException as e:
         logging.error(f"Mistral API Error: Status Code: {e.status_code}, Message: {e.message}")
-        if e.status_code == 429: # Explicit check for rate limit status code
+        if e.status_code == 429:
              raise RateLimitExceededError("Mistral rate limit hit.") from e
-        raise # Re-raise other API errors
+        raise
     except MistralConnectionException as e:
          logging.error(f"Mistral Connection Error: {e}")
-         raise # Re-raise connection errors
+         raise
     except Exception as e:
         logging.error(f"Mistral General Error: {e}")
-        # Add more specific error checking if needed
-        if "'choices'" in str(e): # Example check if choices was the issue
+        if "'choices'" in str(e):
              st.error(f"Mistral API response structure issue: {e}")
         raise
-
-def generate_with_openrouter(prompt, api_key, model_name):
-    """Generates advisory using OpenRouter (OpenAI compatible API)."""
-    # Optional: Get referrer URL from secrets or environment variable
-    referer = st.secrets.get("OPENROUTER_REFERRER", os.environ.get("OPENROUTER_REFERRER", ""))
-    site_name = st.secrets.get("OPENROUTER_SITE_NAME", os.environ.get("OPENROUTER_SITE_NAME", "StreamlitApp"))
-
-    try:
-        client = OpenAI(
-            base_url="https://openrouter.ai/api/v1",
-            api_key=api_key,
-        )
-        response = client.chat.completions.create(
-            model=model_name,
-            messages=[{"role": "user", "content": prompt}],
-            temperature=0.2,
-            response_format={"type": "json_object"},
-            # Add recommended headers for OpenRouter tracking
-            extra_headers={
-                "HTTP-Referer": referer,
-                "X-Title": site_name,
-            } if referer else None
-        )
-        return response.choices[0].message.content
-    except OpenAIRateLimitError as e: # Catch OpenAI specific rate limit error
-        logging.error(f"OpenRouter Rate Limit Error: {e}")
-        raise RateLimitExceededError("OpenRouter rate limit hit.") from e
-    except OpenAIAPIError as e:
-         logging.error(f"OpenRouter API Error: Status Code: {e.status_code}, Message: {e.message}")
-         if e.status_code == 429: # Check status code just in case
-              raise RateLimitExceededError("OpenRouter rate limit hit (via status code).") from e
-         # Handle input token limit errors specifically if possible (often 400 Bad Request)
-         if e.status_code == 400 and "maximum context length" in str(e).lower():
-              logging.error(f"OpenRouter Error: Input likely exceeds model's maximum context length.")
-              st.error(f"Error: The extracted text is too long for the selected model ({model_name}). Try a different model or a shorter notification.")
-              # Do not retry for this error, raise a specific exception or return None
-              raise ValueError("Input text exceeds model context length.") from e
-         raise # Re-raise other API errors
-    except Exception as e:
-        logging.error(f"OpenRouter General Error: {e}")
-        raise
-
 
 # Custom Exception for unified rate limit handling
 class RateLimitExceededError(Exception):
@@ -289,15 +218,10 @@ class RateLimitExceededError(Exception):
 
 # --- Main Generation Logic with Retry ---
 def generate_compliance_advisory(text, provider, model_name):
-    """
-    Generates structured compliance advisory using the selected LLM provider.
-    Includes retry logic for rate limit errors.
-    """
     prompt = create_llm_prompt(text)
     api_key = None
     generate_func = None
 
-    # --- Get API Key and Function based on provider ---
     try:
         if provider == "Gemini":
             api_key = st.secrets["GEMINI_API_KEY"]
@@ -308,9 +232,6 @@ def generate_compliance_advisory(text, provider, model_name):
         elif provider == "Mistral":
             api_key = st.secrets["MISTRAL_API_KEY"]
             generate_func = generate_with_mistral
-        elif provider == "OpenRouter":
-            api_key = st.secrets["OPENROUTER_API_KEY"]
-            generate_func = generate_with_openrouter
         else:
             st.error(f"Invalid provider selected: {provider}")
             return None
@@ -329,7 +250,6 @@ def generate_compliance_advisory(text, provider, model_name):
         logging.error(f"Error configuring for provider {provider}: {e}")
         return None
 
-    # --- API Call with Retry Logic ---
     retries = 0
     while retries <= MAX_RETRIES:
         try:
@@ -339,17 +259,15 @@ def generate_compliance_advisory(text, provider, model_name):
             end_time = time.time()
             logging.info(f"Received response from {provider} in {end_time - start_time:.2f} seconds.")
 
-            # Clean potential markdown/code blocks (optional, as JSON mode should prevent this)
             generated_text = raw_response.strip()
             if generated_text.startswith("```json"):
                 generated_text = generated_text[7:]
             if generated_text.endswith("```"):
                 generated_text = generated_text[:-3]
 
-            # Validate and parse the JSON
             advisory_json = json.loads(generated_text)
             logging.info("Successfully parsed LLM response as JSON.")
-            return advisory_json # Success
+            return advisory_json
 
         except RateLimitExceededError as rlee:
             logging.warning(f"Rate limit encountered for {provider}: {rlee}. Attempt {retries + 1}/{MAX_RETRIES + 1}.")
@@ -360,42 +278,30 @@ def generate_compliance_advisory(text, provider, model_name):
             else:
                 st.error(f"Rate limit hit for {provider}, and max retries ({MAX_RETRIES}) exceeded. Please try again later.")
                 logging.error(f"Rate limit hit for {provider}, max retries exceeded.")
-                return None # Failed after retries
+                return None
 
         except json.JSONDecodeError as e:
             st.error(f"LLM response from {provider} was not valid JSON: {e}")
             st.text_area("Raw LLM Response:", generated_text if 'generated_text' in locals() else 'N/A', height=200)
             logging.error(f"{provider} response JSON parsing failed: {e}. Response: {generated_text if 'generated_text' in locals() else 'N/A'}")
-            return None # Failed - invalid JSON
+            return None
 
-        except ValueError as ve: # Catch specific value errors like context length exceeded
+        except ValueError as ve:
              if "context length" in str(ve):
-                  # Error already logged and shown by the provider function
                   return None
              else:
-                  # Handle other unexpected ValueErrors
                   st.error(f"An unexpected value error occurred with {provider}: {ve}")
                   logging.error(f"Unexpected ValueError with {provider}: {ve}")
                   return None
 
-
         except Exception as e:
             st.error(f"An unexpected error occurred during LLM generation with {provider}: {e}")
             logging.error(f"Error during LLM generation with {provider} (Attempt {retries + 1}): {e}")
-            # Optional: Show more specific feedback if available (e.g., prompt feedback for Gemini)
-            # try:
-            #    if provider == "Gemini" and 'response' in locals():
-            #       st.warning(f"Gemini Prompt Feedback: {response.prompt_feedback}")
-            #       logging.warning(f"Gemini Prompt Feedback: {response.prompt_feedback}")
-            # except Exception: pass
-            # Decide if retry makes sense for generic errors (potentially not)
-            # For simplicity here, we'll stop after the first generic error.
-            return None # Failed - other error
+            return None
 
-    return None # Should not be reached if loop logic is correct
+    return None
 
 # --- Streamlit App ---
-
 st.set_page_config(page_title="RBI Compliance Advisory Generator", layout="wide")
 st.title("🤖 RBI Compliance Advisory Generator")
 st.markdown("""
@@ -406,16 +312,9 @@ and generate a structured compliance advisory.
 **Disclaimer:** This is an AI-powered tool. Always verify the generated advisory against the original RBI notification. Performance may vary between AI providers.
 """)
 
-# --- UI Elements ---
 url = st.text_input("Enter RBI Notification URL:", placeholder="https://www.rbi.org.in/...")
-
-# Provider Selection
 selected_provider = st.selectbox("Choose AI Provider:", LLM_PROVIDERS)
-
-# Dynamically set the default model based on the selected provider
 default_model = DEFAULT_MODELS.get(selected_provider, "")
-# You could enhance this with more model choices per provider if desired
-# For now, we use the default. Ensure DEFAULT_MODELS has entries for all in LLM_PROVIDERS
 st.caption(f"Using model: `{default_model}` for {selected_provider}")
 
 if st.button(f"Generate Advisory using {selected_provider}"):
@@ -427,7 +326,6 @@ if st.button(f"Generate Advisory using {selected_provider}"):
          st.error(f"No default model configured for {selected_provider}. Please update `DEFAULT_MODELS` in the code.")
     else:
         with st.spinner(f"Processing with {selected_provider}... Fetching, extracting, analyzing..."):
-            # 1. Fetch Content
             response = fetch_content(url)
             extracted_text = None
 
@@ -436,7 +334,6 @@ if st.button(f"Generate Advisory using {selected_provider}"):
                 is_pdf = 'application/pdf' in content_type or url.lower().endswith('.pdf')
                 is_html = 'text/html' in content_type
 
-                # 2. Extract Text
                 if is_pdf:
                     logging.info(f"Detected PDF content type for URL: {url}")
                     extracted_text = extract_pdf_text(response)
@@ -450,22 +347,17 @@ if st.button(f"Generate Advisory using {selected_provider}"):
                          logging.warning(f"HTML extraction failed for unknown type. URL: {url}")
                          st.warning(f"Could not determine content type ('{content_type}'). If this is a PDF, ensure the URL ends with '.pdf'.")
 
-
-                # 3. Generate Advisory (if text extracted)
                 if extracted_text:
                     if len(extracted_text) < 100:
                          st.warning("Extracted text seems very short. The notification might be empty, image-based, or complex. Results may be inaccurate.")
                          logging.warning(f"Extracted text is very short ({len(extracted_text)} chars) for URL: {url}")
 
-                    # Call the main generation function with selected provider and model
                     advisory = generate_compliance_advisory(extracted_text, selected_provider, default_model)
 
-                    # 4. Display Output
                     if advisory:
                         st.success(f"✅ Compliance Advisory Generated Successfully using {selected_provider}!")
-                        st.json(advisory) # Display as interactive JSON
+                        st.json(advisory)
 
-                        # Formatted display (remains the same as before)
                         st.subheader("Formatted Advisory Details:")
                         col1, col2 = st.columns(2)
                         with col1:
@@ -494,16 +386,12 @@ if st.button(f"Generate Advisory using {selected_provider}"):
                                 st.markdown(f"**Yearly Occurrence:** On {advisory.get('Y_monthofyear', 'N/A')} {advisory.get('Y_dayofmonth', 'N/A')}")
 
                     else:
-                        # Error messages are now handled within generate_compliance_advisory or its sub-functions
-                        # A general failure message might still be useful if it returns None without specific errors
                         if 'advisory' not in locals() or advisory is None:
                             st.error(f"💥 Failed to generate compliance advisory using {selected_provider} after extracting text. Check logs or previous messages for details.")
                 else:
                     st.error("💥 Failed to extract text content from the URL. Cannot proceed.")
             else:
-                # Error handled in fetch_content
                 pass
 
-# --- Footer ---
 st.markdown("---")
-st.markdown("Powered by Streamlit | AI Providers: Gemini, Groq, Mistral, OpenRouter")
+st.markdown("Powered by Streamlit | AI Providers: Gemini, Groq, Mistral")
