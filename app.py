@@ -1,427 +1,300 @@
 import streamlit as st
 import requests
 from bs4 import BeautifulSoup
-from io import BytesIO
 from pdfminer.high_level import extract_text
-import re
+import google.generativeai as genai
 import json
-from typing import Optional, Dict, List
-import google.generativeai as genai  # For Gemini
-import openai  # For OpenAI (Openrouter)
-from dotenv import load_dotenv  # For API key management
-import logging  # For enhanced logging
+import io
+import logging
+import re
 
-# Initialize logging
-logging.basicConfig(
-    level=logging.INFO, format="%(asctime)s [%(levelname)s] - %(message)s"
-)
+# --- Configuration ---
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
+# --- Constants for Advisory Structure ---
+DEPARTMENTS = [
+    "Administration", "Finance & Accounts", "Training", "Procurement & Commercial",
+    "Human Resource", "Information Security (InfoSec)", "Information Technology",
+    "Internal Audit & Risk Management", "Business Operations", "Legal",
+    "Marketing & Communication", "Mergers & Acquisitions", "Pre Sales & Sales",
+    "Quality Assurance"
+]
+SUB_DEPARTMENTS = [
+    "Operations - Cash Management", "Operations - Trade Services", "Operations - Custody operations",
+    "Operations - Money Market", "Operations - FX", "Operations - ALM", "Operations - Retail Banking",
+    "Operations - Debit/ Credit cards", "Market Risk", "Liquidity Risk", "Credit Risk",
+    "Operational Risk", "Financial Risk", "Bankwide"
+]
+REGULATORY_RISK_THEME = [
+    "Governance (Prudential and Licensing)", "Information and Technology", "Market Conduct and Customers",
+    "Financial Crime", "Employment Practices and Workplace Safety", "Process Enhancement",
+    "Conflict of Interest", "Risk"
+]
+RISK_CATEGORY_ID = [
+    "Credit & Financial", "Non Implementation Risk", "Credit Regulatory Risk",
+    "Reporting Risk", "Conflict of Interest", "Non Compliance Risk", "IT Security Risk"
+]
+INHERENT_RISK_RATING = ["Very High", "High", "Medium", "Low"]
+NATURE_OF_MITIGATION = ["Policy", "Governance", "Process/controls", "Systems and Technology", "Training"]
+COMPLIANCE_FREQUENCY = ["Onetime", "Daily", "Weekly", "Monthly", "Yearly"]
+W_DAYOFWEEK = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+M_WEEKSOFOCCURRENCEFORMONTHLY = ["First", "Second", "Third", "Fourth", "Last", "Day"]
 
-load_dotenv()  # Load environment variables from .env file
+# --- Helper Functions ---
 
-
-# Initialize LLM clients (Add your API keys as secrets in Streamlit)
-# For Gemini
-try:
-    genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
-    gemini_model = genai.GenerativeModel("gemini-pro")  # Or "gemini-pro-vision"
-    logging.info("Gemini client initialized.")
-except KeyError:
-    st.warning(
-        "Gemini API key not found in Streamlit secrets. Gemini functionality will be limited."
-    )
-    gemini_model = None
-    logging.warning("Gemini API key not found.")
-
-
-# For Openrouter (OpenAI)
-try:
-    openai.api_key = st.secrets["OPENROUTER_API_KEY"]
-    openai.api_base = "https://openrouter.ai/api/v1"
-    logging.info("Openrouter client initialized.")
-except KeyError:
-    st.warning(
-        "Openrouter API key not found in Streamlit secrets. Openrouter functionality will be limited."
-    )
-    openai = None
-    logging.warning("Openrouter API key not found.")
-
-
-def get_structured_advisory(
-    extracted_text: str, rbi_url: str, llm_model: str
-) -> Optional[Dict]:
-    """
-    This function calls an LLM to structure the extracted text into the
-    RBI Compliance Advisory format.
-
-    Args:
-        extracted_text (str): The text extracted from the RBI document.
-        rbi_url (str): The URL of the RBI document (for context).
-        llm_model (str): The LLM model to use ("gemini", "openrouter").
-
-    Returns:
-        Optional[Dict]: A dictionary representing the structured RBI Compliance Advisory,
-                        or None on error.
-    """
-    if not extracted_text:
-        logging.error("No text extracted from the RBI document.")
-        return None
-
-    prompt = f"""
-    You are an expert compliance officer. Analyze the following text from an RBI notification and structure it into a compliance advisory.
-    
-    Text:
-    {extracted_text}
-    
-    URL: {rbi_url}
-    
-    Provide the output in the following JSON format.  Strictly adhere to this format.  If a field cannot be determined from the text, use null, but do not omit any fields.  Do not add any extra text or explanation before or after the JSON.
-    
-    {{
-        "Departments": (Select one from: Administration, Finance & Accounts, Training, Procurement & Commercial, Human Resource, Information Security (InfoSec), Information Technology, Internal Audit & Risk Management, Business Operations, Legal, Marketing & Communication, Mergers & Acquisitions, Pre Sales & Sales, Quality Assurance),
-        "Task Name": (Briefly state the task action, starting with "To...".  If no explicit task, use "To review the notification"),
-        "Task Description": (Clearly and concisely describe the required action, risk mitigation, or bank procedure in simple language.),
-        "Sub-Departments": (Select one from: Operations - Cash Management, Operations - Trade Services, Operations - Custody operations, Operations - Money Market, Operations - FX, Operations - ALM, Operations - Retail Banking, Operations - Debit/ Credit cards, Market Risk, Liquidity Risk, Credit Risk, Operational Risk, Financial Risk, Bankwide),
-        "Regulatory Risk/Theme": (Select one from: Governance (Prudential and Licensing), Information and Technology, Market Conduct and Customers, Financial Crime, Employment Practices and Workplace Safety, Process Enhancement, Conflict of Interest, Risk),
-        "Risk Category ID": (Select one from: Credit & Financial, Non Implementation Risk, Credit Regulatory Risk, Reporting Risk, Conflict of Interest, Non Compliance Risk, IT Security Risk),
-        "Inherent Risk Rating": (Select one from: Very High, High, Medium, Low),
-        "Nature of Mitigation": (Select one from: Policy, Governance, Process/controls, Systems and Technology, Training),
-        "Task Frequency Start Date": (Use '01-04-2024' for recurring tasks, or the 'Notification date' for non-recurring tasks.  Use format DD-MM-YYYY),
-        "Task Frequency End Date": (Use '31-03-2039'. Use format DD-MM-YYYY),
-        "Compliance Frequency": (Select one from: Onetime, Daily, Weekly, Monthly, Yearly),
-        "Due Date": (Use '31-03-2099' for one-time tasks. Use format DD-MM-YYYY),
-        "D_daysofoccurrence": (If Compliance Frequency is 'Daily', specify the occurrence interval, otherwise null),
-        "W_weeksofoccurrence": (If Compliance Frequency is 'Weekly', specify the occurrence interval, otherwise null),
-        "W_dayofweek": (Select one from: Monday, Tuesday, Wednesday, Thursday, Friday, Saturday, Sunday, otherwise null),
-        "M_weeksofoccurrenceformonthly": (Select one from: First, Second, Third, Fourth, Last, Day, otherwise null),
-        "M_dayofweek": (Specify the day of the month for 'Monthly' frequency, otherwise null),
-        "M_monthsofoccurence": (Specify the monthly occurrence interval, otherwise null),
-        "Y_monthofyear": (Specify the month for 'Yearly' frequency, otherwise null),
-        "Y_dayofmonth": (Specify the day of the month for 'Yearly' frequency, otherwise null)
-    }}
-    """
-
+def fetch_content(url):
+    """Fetches content from the URL, handling potential errors."""
     try:
-        if llm_model == "gemini" and gemini_model:
-            try:
-                response = gemini_model.generate_text(prompt=prompt)
-                if response and response.text:
-                    return json.loads(response.text)
-                else:
-                    logging.warning("Gemini returned an empty response.")
-                    return None
-            except Exception as e:
-                logging.error(f"Gemini API error: {e}")
-                st.error(f"Gemini API error: {e}")
-                return None
-
-        elif llm_model == "openrouter" and openai:
-            try:
-                response = openai.Completion.create(
-                    model="openai/gpt-3.5-turbo",  # Or another Openrouter model
-                    prompt=prompt,
-                    max_tokens=1000,  # Adjust as needed
-                    # Add headers for Openrouter
-                    headers={
-                        "HTTP-Referer": "https://your-website.com",  # Replace with your website
-                        "X-Title": "RBI Compliance Tool",  # Replace with your app's title
-                    },
-                )
-                if response and response.choices and response.choices[0].text:
-                    return json.loads(response.choices[0].text.strip())
-                else:
-                    logging.warning("Openrouter returned an empty response.")
-                    return None
-            except Exception as e:
-                logging.error(f"Openrouter API error: {e}")
-                st.error(f"Openrouter API error: {e}")
-                return None
-
-        else:
-            error_message = f"LLM model {llm_model} is either unsupported or its API key is missing."
-            logging.error(error_message)
-            raise ValueError(error_message)
-    except ValueError as ve:
-        st.error(ve)
-        return None
-    except Exception as e:
-        st.error(f"An unexpected error occurred: {e}")
-        logging.exception(f"An unexpected error occurred: {e}")  # Log the full traceback
-        return None
-
-
-def extract_text_from_url(url: str) -> Optional[str]:
-    """
-    Extracts text from a given URL, handling both HTML and PDF content.
-
-    Args:
-        url (str): The URL to extract text from.
-
-    Returns:
-        Optional[str]: The extracted text, or None on error.
-    """
-    try:
-        response = requests.get(url, timeout=15)  # Increased timeout
-        response.raise_for_status()  # Raise HTTPError for bad responses
-        content_type = response.headers["Content-Type"]
-
-        if "text/html" in content_type:
-            soup = BeautifulSoup(response.content, "html.parser")
-            # Remove script and style tags to get cleaner text
-            for script_or_style in soup.find_all(["script", "style"]):
-                script_or_style.decompose()
-            text = soup.get_text(separator="\n")
-            logging.info(f"Successfully extracted text from HTML URL: {url}")
-            return text
-        elif "application/pdf" in content_type:
-            pdf_content = BytesIO(response.content)
-            text = extract_text(pdf_content)
-            logging.info(f"Successfully extracted text from PDF URL: {url}")
-            return text
-        else:
-            error_message = f"Unsupported content type: {content_type} for URL: {url}"
-            st.error(error_message)
-            logging.error(error_message)
-            return None
+        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'}
+        response = requests.get(url, headers=headers, timeout=30, stream=True) # Use stream=True for PDFs
+        response.raise_for_status()  # Raise HTTPError for bad responses (4xx or 5xx)
+        return response
     except requests.exceptions.RequestException as e:
-        error_message = f"Error fetching URL: {e} for URL: {url}"
-        st.error(error_message)
-        logging.error(error_message)
+        st.error(f"Error fetching URL: {e}")
+        logging.error(f"Error fetching URL {url}: {e}")
+        return None
+
+def extract_html_text(response):
+    """Extracts text content from HTML response using BeautifulSoup."""
+    try:
+        soup = BeautifulSoup(response.content, 'html.parser')
+        # Attempt to remove common boilerplate (header, footer, nav) - this is heuristic
+        for tag in soup(['header', 'footer', 'nav', 'script', 'style', 'aside']):
+            tag.decompose()
+        # Get remaining text, joining paragraphs/sections
+        text = ' '.join(p.get_text(strip=True) for p in soup.find_all(['p', 'div', 'article', 'section']))
+        if not text: # Fallback if specific tags yield nothing
+             text = soup.get_text(separator=' ', strip=True)
+        # Clean up excessive whitespace
+        text = re.sub(r'\s+', ' ', text).strip()
+        logging.info(f"Successfully extracted text from HTML (approx {len(text)} chars).")
+        return text if text else None
+    except Exception as e:
+        st.error(f"Error parsing HTML: {e}")
+        logging.error(f"Error parsing HTML: {e}")
+        return None
+
+def extract_pdf_text(response):
+    """Extracts text content from PDF response using pdfminer.six."""
+    try:
+        # Read PDF content into a BytesIO object
+        pdf_content = io.BytesIO(response.content)
+        text = extract_text(pdf_content)
+         # Clean up excessive whitespace
+        text = re.sub(r'\s+', ' ', text).strip()
+        logging.info(f"Successfully extracted text from PDF (approx {len(text)} chars).")
+        return text if text else None
+    except Exception as e:
+        # pdfminer can raise various errors, catch broadly
+        st.error(f"Error extracting text from PDF: {e}. The PDF might be image-based or corrupted.")
+        logging.error(f"Error extracting text from PDF: {e}")
+        return None
+
+def configure_gemini():
+    """Configures the Gemini API."""
+    try:
+        api_key = st.secrets["GEMINI_API_KEY"]
+        genai.configure(api_key=api_key)
+        logging.info("Gemini API configured successfully.")
+        return True
+    except KeyError:
+        st.error("GEMINI_API_KEY not found in Streamlit secrets. Please add it.")
+        logging.error("GEMINI_API_KEY not found in Streamlit secrets.")
+        return False
+    except Exception as e:
+        st.error(f"Error configuring Gemini API: {e}")
+        logging.error(f"Error configuring Gemini API: {e}")
+        return False
+
+def generate_compliance_advisory(text):
+    """Generates structured compliance advisory using Gemini LLM."""
+    if not configure_gemini():
+        return None
+
+    model = genai.GenerativeModel('gemini-1.5-flash') # Or use 'gemini-pro' if preferred
+
+    # --- Detailed Prompt Construction ---
+    prompt = f"""
+    Analyze the following text extracted from an RBI notification and generate a SINGLE structured compliance advisory in JSON format.
+    Adhere strictly to the specified JSON structure and field constraints. Select only from the provided options where applicable.
+    Base your answers *solely* on the provided text. If information isn't present, make the most reasonable inference or use the specified defaults.
+
+    **RBI Notification Text:**
+    ```
+    {text[:15000]}
+    ```
+    *(Note: Text might be truncated for brevity)*
+
+    **Required JSON Output Format:**
+
+    ```json
+    {{
+      "Departments": "Select ONE from: {', '.join(DEPARTMENTS)}",
+      "Task Name": "Start with 'To...'. Brief action statement.",
+      "Task Description": "Clear, concise description of the required action, risk, or procedure in simple language.",
+      "Sub-Departments": "Select ONE from: {', '.join(SUB_DEPARTMENTS)}",
+      "Regulatory Risk/Theme": "Select ONE from: {', '.join(REGULATORY_RISK_THEME)}",
+      "Risk Category ID": "Select ONE from: {', '.join(RISK_CATEGORY_ID)}",
+      "Inherent Risk Rating": "Select ONE from: {', '.join(INHERENT_RISK_RATING)}",
+      "Nature of Mitigation": "Select ONE from: {', '.join(NATURE_OF_MITIGATION)}",
+      "Task Frequency Start Date": "Use '01-04-2024' for recurring tasks (Daily, Weekly, Monthly, Yearly). Use the notification's effective/issue date for 'Onetime' tasks if identifiable, otherwise default to '01-04-2024'. Format: DD-MM-YYYY",
+      "Task Frequency End Date": "Use '31-03-2039'. Format: DD-MM-YYYY",
+      "Compliance Frequency": "Select ONE from: {', '.join(COMPLIANCE_FREQUENCY)}",
+      "Due Date": "Use '31-03-2099' for 'Onetime' tasks. For recurring tasks, estimate the *first* due date based on frequency and start date if possible, otherwise use '31-03-2099'. Format: DD-MM-YYYY",
+      "D_daysofoccurrence": "Specify interval (e.g., 1) ONLY if Compliance Frequency is 'Daily'. Otherwise, null or omit.",
+      "W_weeksofoccurrence": "Specify interval (e.g., 1) ONLY if Compliance Frequency is 'Weekly'. Otherwise, null or omit.",
+      "W_dayofweek": "Select ONE from: {', '.join(W_DAYOFWEEK)} ONLY if Compliance Frequency is 'Weekly'. Otherwise, null or omit.",
+      "M_weeksofoccurrenceformonthly": "Select ONE from: {', '.join(M_WEEKSOFOCCURRENCEFORMONTHLY)} ONLY if Compliance Frequency is 'Monthly'. Otherwise, null or omit.",
+      "M_dayofweek": "Specify day (e.g., 15) ONLY if Compliance Frequency is 'Monthly'. Otherwise, null or omit.",
+      "M_monthsofoccurence": "Specify interval (e.g., 1) ONLY if Compliance Frequency is 'Monthly'. Otherwise, null or omit.",
+      "Y_monthofyear": "Specify month (e.g., 'April') ONLY if Compliance Frequency is 'Yearly'. Otherwise, null or omit.",
+      "Y_dayofmonth": "Specify day (e.g., 15) ONLY if Compliance Frequency is 'Yearly'. Otherwise, null or omit."
+    }}
+    ```
+
+    **Instructions:**
+    1. Carefully read the text to understand the core compliance requirement(s). Focus on identifying the main actionable task.
+    2. Fill *every* field in the JSON structure.
+    3. Strictly use the provided options for categorical fields. Do not invent new categories.
+    4. Make logical choices for dates and frequencies based on the text. Apply defaults as specified.
+    5. Ensure the final output is a single, valid JSON object.
+    """
+
+    try:
+        response = model.generate_content(
+            prompt,
+            generation_config=genai.types.GenerationConfig(
+                # Ensure JSON output if the model supports it directly
+                 response_mime_type="application/json",
+                temperature=0.2 # Lower temperature for more deterministic output
+            )
+        )
+        # Clean potential markdown/code blocks if necessary
+        generated_text = response.text.strip()
+        if generated_text.startswith("```json"):
+            generated_text = generated_text[7:]
+        if generated_text.endswith("```"):
+            generated_text = generated_text[:-3]
+
+        logging.info("Received response from LLM.")
+        # Validate and parse the JSON
+        advisory_json = json.loads(generated_text)
+        logging.info("Successfully parsed LLM response as JSON.")
+        return advisory_json
+
+    except json.JSONDecodeError as e:
+        st.error(f"LLM response was not valid JSON: {e}")
+        st.text_area("Raw LLM Response:", generated_text, height=200)
+        logging.error(f"LLM response JSON parsing failed: {e}. Response: {generated_text}")
         return None
     except Exception as e:
-        error_message = f"Error processing content: {e} for URL: {url}"
-        st.error(error_message)
-        logging.exception(
-            error_message
-        )  # Log the full traceback, including exception type, stack trace
+        st.error(f"Error during LLM generation: {e}")
+        logging.error(f"Error during LLM generation: {e}")
+        # You might want to inspect `response.prompt_feedback` here for specific issues like blocked prompts
+        # try:
+        #    st.warning(f"Prompt Feedback: {response.prompt_feedback}")
+        #    logging.warning(f"Prompt Feedback: {response.prompt_feedback}")
+        # except Exception:
+        #    pass # Ignore if feedback isn't available
         return None
 
+# --- Streamlit App ---
 
-def validate_structured_advisory(advisory: Dict) -> List[str]:
-    """
-    Validates the structure and content of the generated RBI Compliance Advisory.
+st.set_page_config(page_title="RBI Compliance Advisory Generator", layout="wide")
+st.title("🤖 RBI Compliance Advisory Generator")
+st.markdown("""
+Paste the URL of an RBI notification (HTML page or direct PDF link) below.
+The application will attempt to extract the text, analyze it using an AI model,
+and generate a structured compliance advisory based on the predefined format.
 
-    Args:
-        advisory (dict): The advisory to validate.
+**Disclaimer:** This is an AI-powered tool. Always verify the generated advisory against the original RBI notification.
+""")
 
-    Returns:
-        List[str]: A list of error messages.  Empty list if valid.
-    """
-    errors = []
+url = st.text_input("Enter RBI Notification URL:", placeholder="https://www.rbi.org.in/...")
 
-    if not isinstance(advisory, dict):
-        errors.append("Advisory is not a dictionary.")
-        return errors  # Stop further checks if it's not a dict
+if st.button("Generate Advisory"):
+    if not url:
+        st.warning("Please enter a URL.")
+    elif not (url.startswith("http://") or url.startswith("https://")):
+         st.error("Invalid URL. Please enter a valid HTTP or HTTPS URL.")
+    else:
+        with st.spinner("Processing... Fetching content, extracting text, and analyzing with AI..."):
+            # 1. Fetch Content
+            response = fetch_content(url)
+            extracted_text = None
 
-    # Check for missing keys
-    required_keys = [
-        "Departments",
-        "Task Name",
-        "Task Description",
-        "Sub-Departments",
-        "Regulatory Risk/Theme",
-        "Risk Category ID",
-        "Inherent Risk Rating",
-        "Nature of Mitigation",
-        "Task Frequency Start Date",
-        "Task Frequency End Date",
-        "Compliance Frequency",
-        "Due Date",
-        "D_daysofoccurrence",
-        "W_weeksofoccurrence",
-        "W_dayofweek",
-        "M_weeksofoccurrenceformonthly",
-        "M_dayofweek",
-        "M_monthsofoccurence",
-        "Y_monthofyear",
-        "Y_dayofmonth",
-    ]
-    for key in required_keys:
-        if key not in advisory:
-            errors.append(f"Missing required key: {key}")
+            if response:
+                content_type = response.headers.get('Content-Type', '').lower()
+                is_pdf = 'application/pdf' in content_type or url.lower().endswith('.pdf')
+                is_html = 'text/html' in content_type
 
-    if errors:
-        return errors  # Return early if there are missing keys
-
-    # Check for valid values (Example checks.  Extend as needed)
-    valid_departments = [
-        "Administration",
-        "Finance & Accounts",
-        "Training",
-        "Procurement & Commercial",
-        "Human Resource",
-        "Information Security (InfoSec)",
-        "Information Technology",
-        "Internal Audit & Risk Management",
-        "Business Operations",
-        "Legal",
-        "Marketing & Communication",
-        "Mergers & Acquisitions",
-        "Pre Sales & Sales",
-        "Quality Assurance",
-    ]
-    if advisory.get("Departments") not in valid_departments:
-        errors.append(f"Invalid Department: {advisory.get('Departments')}")
-
-    valid_sub_departments = [
-        "Operations - Cash Management",
-        "Operations - Trade Services",
-        "Operations - Custody operations",
-        "Operations - Money Market",
-        "Operations - FX",
-        "Operations - ALM",
-        "Operations - Retail Banking",
-        "Operations - Debit/ Credit cards",
-        "Market Risk",
-        "Liquidity Risk",
-        "Credit Risk",
-        "Operational Risk",
-        "Financial Risk",
-        "Bankwide",
-    ]
-    if advisory.get("Sub-Departments") not in valid_sub_departments:
-        errors.append(f"Invalid Sub-Department: {advisory.get('Sub-Departments')}")
-
-    valid_regulatory_themes = [
-        "Governance (Prudential and Licensing)",
-        "Information and Technology",
-        "Market Conduct and Customers",
-        "Financial Crime",
-        "Employment Practices and Workplace Safety",
-        "Process Enhancement",
-        "Conflict of Interest",
-        "Risk",
-    ]
-    if advisory.get("Regulatory Risk/Theme") not in valid_regulatory_themes:
-        errors.append(
-            f"Invalid Regulatory Risk/Theme: {advisory.get('Regulatory Risk/Theme')}"
-        )
-
-    valid_risk_categories = [
-        "Credit & Financial",
-        "Non Implementation Risk",
-        "Credit Regulatory Risk",
-        "Reporting Risk",
-        "Conflict of Interest",
-        "Non Compliance Risk",
-        "IT Security Risk",
-    ]
-    if advisory.get("Risk Category ID") not in valid_risk_categories:
-        errors.append(f"Invalid Risk Category ID: {advisory.get('Risk Category ID')}")
-
-    valid_risk_ratings = ["Very High", "High", "Medium", "Low"]
-    if advisory.get("Inherent Risk Rating") not in valid_risk_ratings:
-        errors.append(
-            f"Invalid Inherent Risk Rating: {advisory.get('Inherent Risk Rating')}"
-        )
-
-    valid_mitigations = [
-        "Policy",
-        "Governance",
-        "Process/controls",
-        "Systems and Technology",
-        "Training",
-    ]
-    if advisory.get("Nature of Mitigation") not in valid_mitigations:
-        errors.append(f"Invalid Nature of Mitigation: {advisory.get('Nature of Mitigation')}")
-
-    valid_frequencies = ["Onetime", "Daily", "Weekly", "Monthly", "Yearly"]
-    if advisory.get("Compliance Frequency") not in valid_frequencies:
-        errors.append(f"Invalid Compliance Frequency: {advisory.get('Compliance Frequency')}")
-
-    valid_days = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
-    if advisory.get("W_dayofweek") and advisory.get("W_dayofweek") not in valid_days:
-        errors.append(f"Invalid W_dayofweek: {advisory.get('W_dayofweek')}")
-
-    valid_weeks = ["First", "Second", "Third", "Fourth", "Last", "Day"]
-    if (
-        advisory.get("M_weeksofoccurrenceformonthly")
-        and advisory.get("M_weeksofoccurrenceformonthly") not in valid_weeks
-    ):
-        errors.append(
-            f"Invalid M_weeksofoccurrenceformonthly: {advisory.get('M_weeksofoccurrenceformonthly')}"
-        )
-
-    # Date format validation (basic)
-    date_format = r"\d{1,2}[-./]\d{1,2}[-./]\d{2,4}"
-    if (
-        advisory.get("Task Frequency Start Date")
-        and not re.match(date_format, advisory.get("Task Frequency Start Date"))
-    ):
-        errors.append(
-            "Invalid Task Frequency Start Date format. Use DD-MM-YYYY, DD/MM/YYYY, or DD.MM.YYYY"
-        )
-    if (
-        advisory.get("Task Frequency End Date")
-        and not re.match(date_format, advisory.get("Task Frequency End Date"))
-    ):
-        errors.append(
-            "Invalid Task Frequency End Date format. Use DD-MM-YYYY, DD/MM/YYYY, or DD.MM.YYYY"
-        )
-    if (
-        advisory.get("Due Date")
-        and not re.match(date_format, advisory.get("Due Date"))
-    ):
-        errors.append(
-            "Invalid Due Date format. Use DD-MM-YYYY, DD/MM/YYYY, or DD.MM.YYYY"
-        )
-
-    # Check for logical consistency
-    if (
-        advisory.get("Compliance Frequency") == "Onetime"
-        and advisory.get("Due Date") == "31-03-2099"
-    ):
-        errors.append(
-            "For 'Onetime' frequency, Due Date should be a specific date, not 31-03-2099."
-        )
-
-    return errors
-
-
-def main():
-    """
-    Main function to run the Streamlit application.
-    """
-    st.title("RBI Compliance Advisory Generator")
-    st.markdown("Enter an RBI notification URL to generate a structured compliance advisory.")
-
-    rbi_url = st.text_input("RBI Notification URL:", "")
-    llm_model = st.selectbox(
-        "Choose LLM Model", ["gemini", "openrouter"]
-    )  # removed groq and mistral
-
-    if rbi_url:
-        with st.spinner("Fetching and processing..."):
-            extracted_text = extract_text_from_url(rbi_url)
-            if extracted_text:
-                structured_advisory = get_structured_advisory(
-                    extracted_text, rbi_url, llm_model
-                )  # Pass the model
-                if structured_advisory:
-                    errors = validate_structured_advisory(structured_advisory)
-                    if errors:
-                        st.error("Errors in generated advisory:")
-                        for error in errors:
-                            st.error(error)
-                    else:
-                        st.subheader("Generated Compliance Advisory:")
-                        st.json(
-                            structured_advisory
-                        )  # Display as JSON for easy viewing
-                        logging.info("Successfully generated and validated advisory.")
+                # 2. Extract Text
+                if is_pdf:
+                    logging.info(f"Detected PDF content type for URL: {url}")
+                    extracted_text = extract_pdf_text(response)
+                elif is_html:
+                    logging.info(f"Detected HTML content type for URL: {url}")
+                    extracted_text = extract_html_text(response)
                 else:
-                    st.error(
-                        "Failed to generate structured advisory.  The LLM was unable to process the input."
-                    )
-                    logging.error("LLM failed to generate structured advisory.")
+                    # Fallback attempt for unknown content type - try HTML first
+                    logging.warning(f"Unknown content type '{content_type}'. Attempting HTML extraction for URL: {url}")
+                    extracted_text = extract_html_text(response)
+                    if not extracted_text:
+                         logging.warning(f"HTML extraction failed for unknown type. URL: {url}")
+                         st.warning(f"Could not determine content type ('{content_type}'). If this is a PDF, ensure the URL ends with '.pdf'.")
+
+
+                # 3. Generate Advisory (if text extracted)
+                if extracted_text:
+                    if len(extracted_text) < 100: # Basic check for meaningful content
+                         st.warning("Extracted text seems very short. The notification might be empty, image-based, or complex. Results may be inaccurate.")
+                         logging.warning(f"Extracted text is very short ({len(extracted_text)} chars) for URL: {url}")
+
+                    advisory = generate_compliance_advisory(extracted_text)
+
+                    # 4. Display Output
+                    if advisory:
+                        st.success("✅ Compliance Advisory Generated Successfully!")
+                        st.json(advisory) # Display as interactive JSON
+
+                        # Optionally display as formatted text/table
+                        st.subheader("Formatted Advisory Details:")
+                        # Use columns for better layout
+                        col1, col2 = st.columns(2)
+                        with col1:
+                            st.markdown(f"**Department:** {advisory.get('Departments', 'N/A')}")
+                            st.markdown(f"**Sub-Department:** {advisory.get('Sub-Departments', 'N/A')}")
+                            st.markdown(f"**Task Name:** {advisory.get('Task Name', 'N/A')}")
+                            st.markdown(f"**Task Description:**")
+                            st.markdown(f"> {advisory.get('Task Description', 'N/A')}") # Blockquote for description
+                            st.markdown(f"**Regulatory Risk/Theme:** {advisory.get('Regulatory Risk/Theme', 'N/A')}")
+                            st.markdown(f"**Risk Category ID:** {advisory.get('Risk Category ID', 'N/A')}")
+                            st.markdown(f"**Inherent Risk Rating:** {advisory.get('Inherent Risk Rating', 'N/A')}")
+                            st.markdown(f"**Nature of Mitigation:** {advisory.get('Nature of Mitigation', 'N/A')}")
+                        with col2:
+                            st.markdown(f"**Compliance Frequency:** {advisory.get('Compliance Frequency', 'N/A')}")
+                            st.markdown(f"**Task Frequency Start Date:** {advisory.get('Task Frequency Start Date', 'N/A')}")
+                            st.markdown(f"**Task Frequency End Date:** {advisory.get('Task Frequency End Date', 'N/A')}")
+                            st.markdown(f"**Due Date:** {advisory.get('Due Date', 'N/A')}")
+                            # Display frequency details conditionally
+                            freq = advisory.get('Compliance Frequency')
+                            if freq == 'Daily':
+                                st.markdown(f"**Daily Occurrence:** Every {advisory.get('D_daysofoccurrence', 'N/A')} day(s)")
+                            elif freq == 'Weekly':
+                                st.markdown(f"**Weekly Occurrence:** Every {advisory.get('W_weeksofoccurrence', 'N/A')} week(s) on {advisory.get('W_dayofweek', 'N/A')}")
+                            elif freq == 'Monthly':
+                                st.markdown(f"**Monthly Occurrence:** {advisory.get('M_weeksofoccurrenceformonthly', 'N/A')} {advisory.get('M_dayofweek', 'day')} every {advisory.get('M_monthsofoccurence', 'N/A')} month(s)")
+                            elif freq == 'Yearly':
+                                st.markdown(f"**Yearly Occurrence:** On {advisory.get('Y_monthofyear', 'N/A')} {advisory.get('Y_dayofmonth', 'N/A')}")
+
+                    else:
+                        st.error("💥 Failed to generate compliance advisory after extracting text.")
+                else:
+                    st.error("💥 Failed to extract text content from the URL. Cannot proceed.")
             else:
-                st.error("Failed to extract text from the provided URL.")
-                logging.error("Failed to extract text from URL.")
+                # Error handled in fetch_content
+                pass # Error message already shown by fetch_content
 
-    st.markdown(
-        "Note: This application is a prototype and may not be fully accurate.  Always verify compliance requirements with the official RBI documentation."
-    )
-
-
-if __name__ == "__main__":
-    main()
+# --- Footer/Instructions ---
+st.markdown("---")
+st.markdown("Created with Streamlit and Google Gemini.")
