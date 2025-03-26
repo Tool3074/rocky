@@ -5,11 +5,51 @@ from io import BytesIO
 from pdfminer.high_level import extract_text
 import re
 import json
-import os
 from typing import Optional, Dict, List
+import google.generativeai as genai  # For Gemini
+import openai  # For OpenAI (Openrouter)
+from dotenv import load_dotenv  # For API key management
+import logging  # For enhanced logging
 
-# Placeholder for LLM function.  Replace with actual LLM call.
-def get_structured_advisory(extracted_text: str, rbi_url: str, llm_model: str) -> Optional[Dict]:
+# Initialize logging
+logging.basicConfig(
+    level=logging.INFO, format="%(asctime)s [%(levelname)s] - %(message)s"
+)
+
+
+load_dotenv()  # Load environment variables from .env file
+
+
+# Initialize LLM clients (Add your API keys as secrets in Streamlit)
+# For Gemini
+try:
+    genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
+    gemini_model = genai.GenerativeModel("gemini-pro")  # Or "gemini-pro-vision"
+    logging.info("Gemini client initialized.")
+except KeyError:
+    st.warning(
+        "Gemini API key not found in Streamlit secrets. Gemini functionality will be limited."
+    )
+    gemini_model = None
+    logging.warning("Gemini API key not found.")
+
+
+# For Openrouter (OpenAI)
+try:
+    openai.api_key = st.secrets["OPENROUTER_API_KEY"]
+    openai.api_base = "https://openrouter.ai/api/v1"
+    logging.info("Openrouter client initialized.")
+except KeyError:
+    st.warning(
+        "Openrouter API key not found in Streamlit secrets. Openrouter functionality will be limited."
+    )
+    openai = None
+    logging.warning("Openrouter API key not found.")
+
+
+def get_structured_advisory(
+    extracted_text: str, rbi_url: str, llm_model: str
+) -> Optional[Dict]:
     """
     This function calls an LLM to structure the extracted text into the
     RBI Compliance Advisory format.
@@ -17,13 +57,14 @@ def get_structured_advisory(extracted_text: str, rbi_url: str, llm_model: str) -
     Args:
         extracted_text (str): The text extracted from the RBI document.
         rbi_url (str): The URL of the RBI document (for context).
-        llm_model (str): The LLM model to use ("gemini", "groq", "mistral", "openrouter").
+        llm_model (str): The LLM model to use ("gemini", "openrouter").
 
     Returns:
         Optional[Dict]: A dictionary representing the structured RBI Compliance Advisory,
                         or None on error.
     """
     if not extracted_text:
+        logging.error("No text extracted from the RBI document.")
         return None
 
     prompt = f"""
@@ -61,121 +102,53 @@ def get_structured_advisory(extracted_text: str, rbi_url: str, llm_model: str) -
     """
 
     try:
-        if llm_model == "gemini":
-            #  Replace with actual Gemini API call
-            # Example (Conceptual):
-            # response = google_gemini_api.generate_text(prompt=prompt)
-            # return json.loads(response.text)
-            return simulate_llm_response(prompt) # Keep the simulation for now.
+        if llm_model == "gemini" and gemini_model:
+            try:
+                response = gemini_model.generate_text(prompt=prompt)
+                if response and response.text:
+                    return json.loads(response.text)
+                else:
+                    logging.warning("Gemini returned an empty response.")
+                    return None
+            except Exception as e:
+                logging.error(f"Gemini API error: {e}")
+                st.error(f"Gemini API error: {e}")
+                return None
 
-        elif llm_model == "groq":
-            # Replace with actual Groq API call
-            # response = groq_client.generate_text(prompt=prompt)
-            # return json.loads(response.text)
-             return simulate_llm_response(prompt) # Keep the simulation for now.
-
-        elif llm_model == "mistral":
-            # Replace with actual Mistral API call
-            # response = mistral_client.generate_text(prompt=prompt)
-            # return json.loads(response.text)
-            return simulate_llm_response(prompt) # Keep the simulation for now.
-
-        elif llm_model == "openrouter":
-            # Replace with actual Openrouter API call
-            # response = openrouter_client.complete(prompt=prompt)
-            # return json.loads(response.text)
-            return simulate_llm_response(prompt) # Keep the simulation for now.
+        elif llm_model == "openrouter" and openai:
+            try:
+                response = openai.Completion.create(
+                    model="openai/gpt-3.5-turbo",  # Or another Openrouter model
+                    prompt=prompt,
+                    max_tokens=1000,  # Adjust as needed
+                    # Add headers for Openrouter
+                    headers={
+                        "HTTP-Referer": "https://your-website.com",  # Replace with your website
+                        "X-Title": "RBI Compliance Tool",  # Replace with your app's title
+                    },
+                )
+                if response and response.choices and response.choices[0].text:
+                    return json.loads(response.choices[0].text.strip())
+                else:
+                    logging.warning("Openrouter returned an empty response.")
+                    return None
+            except Exception as e:
+                logging.error(f"Openrouter API error: {e}")
+                st.error(f"Openrouter API error: {e}")
+                return None
 
         else:
-            raise ValueError(f"Unsupported LLM model: {llm_model}")
+            error_message = f"LLM model {llm_model} is either unsupported or its API key is missing."
+            logging.error(error_message)
+            raise ValueError(error_message)
+    except ValueError as ve:
+        st.error(ve)
+        return None
     except Exception as e:
-        st.error(f"LLM API Error: {e}")
+        st.error(f"An unexpected error occurred: {e}")
+        logging.exception(f"An unexpected error occurred: {e}")  # Log the full traceback
         return None
 
-def simulate_llm_response(prompt: str) -> Optional[Dict]:
-    """
-    Simulates the response from an LLM.  This should be replaced with
-    actual LLM API calls.
-
-    Args:
-        prompt (str): The prompt sent to the LLM.
-
-    Returns:
-        Optional[Dict]: A simulated LLM response.
-    """
-    # This is a placeholder.  A real LLM will provide much better results.
-    if "fraud" in prompt.lower():
-        return {
-            "Departments": "Internal Audit & Risk Management",
-            "Task Name": "To implement fraud prevention measures",
-            "Task Description": "Establish and maintain controls to prevent and detect fraudulent activities as per RBI guidelines.",
-            "Sub-Departments": "Bankwide",
-            "Regulatory Risk/Theme": "Financial Crime",
-            "Risk Category ID": "Non Compliance Risk",
-            "Inherent Risk Rating": "High",
-            "Nature of Mitigation": "Process/controls",
-            "Task Frequency Start Date": "01-04-2024",
-            "Task Frequency End Date": "31-03-2039",
-            "Compliance Frequency": "Monthly",
-            "Due Date": None,
-            "D_daysofoccurrence": None,
-            "W_weeksofoccurrence": None,
-            "W_dayofweek": None,
-            "M_weeksofoccurrenceformonthly": "Last",
-            "M_dayofweek": "Friday",
-            "M_monthsofoccurence": 1,
-            "Y_monthofyear": None,
-            "Y_dayofmonth": None
-        }
-    elif "customer service" in prompt.lower():
-        return {
-            "Departments": "Business Operations",
-            "Task Name": "To enhance customer service standards",
-            "Task Description": "Improve customer service in accordance with RBI directives on customer grievance redressal.",
-            "Sub-Departments": "Operations - Retail Banking",
-            "Regulatory Risk/Theme": "Market Conduct and Customers",
-            "Risk Category ID": "Non Compliance Risk",
-            "Inherent Risk Rating": "Medium",
-            "Nature of Mitigation": "Training",
-            "Task Frequency Start Date": "01-04-2024",
-            "Task Frequency End Date": "31-03-2039",
-            "Compliance Frequency": "Yearly",
-            "Due Date": None,
-            "D_daysofoccurrence": None,
-            "W_weeksofoccurrence": None,
-            "W_dayofweek": None,
-            "M_weeksofoccurrenceformonthly": None,
-            "M_dayofweek": None,
-            "M_monthsofoccurence": None,
-            "Y_monthofyear": "March",
-            "Y_dayofmonth": 31
-        }
-
-    elif "master circular" in prompt.lower():
-        return {
-            "Departments": "Legal",
-            "Task Name": "To review master circular",
-            "Task Description": "Review and implement changes mandated by the RBI master circular on loans and advances.",
-            "Sub-Departments": "Credit Risk",
-            "Regulatory Risk/Theme": "Governance (Prudential and Licensing)",
-            "Risk Category ID": "Credit Regulatory Risk",
-            "Inherent Risk Rating": "High",
-            "Nature of Mitigation": "Policy",
-            "Task Frequency Start Date": "15-05-2024",
-            "Task Frequency End Date": "31-03-2039",
-            "Compliance Frequency": "Onetime",
-            "Due Date": "30-06-2024",
-            "D_daysofoccurrence": None,
-            "W_weeksofoccurrence": None,
-            "W_dayofweek": None,
-            "M_weeksofoccurrenceformonthly": None,
-            "M_dayofweek": None,
-            "M_monthsofoccurence": None,
-            "Y_monthofyear": None,
-            "Y_dayofmonth": None
-        }
-    else:
-        return None
 
 def extract_text_from_url(url: str) -> Optional[str]:
     """
@@ -188,29 +161,41 @@ def extract_text_from_url(url: str) -> Optional[str]:
         Optional[str]: The extracted text, or None on error.
     """
     try:
-        response = requests.get(url, timeout=10)  # Increased timeout
+        response = requests.get(url, timeout=15)  # Increased timeout
         response.raise_for_status()  # Raise HTTPError for bad responses
+        content_type = response.headers["Content-Type"]
 
-        if 'text/html' in response.headers['Content-Type']:
-            soup = BeautifulSoup(response.content, 'html.parser')
+        if "text/html" in content_type:
+            soup = BeautifulSoup(response.content, "html.parser")
             # Remove script and style tags to get cleaner text
-            for script_or_style in soup.find_all(['script', 'style']):
+            for script_or_style in soup.find_all(["script", "style"]):
                 script_or_style.decompose()
-            text = soup.get_text(separator='\n')
+            text = soup.get_text(separator="\n")
+            logging.info(f"Successfully extracted text from HTML URL: {url}")
             return text
-        elif 'application/pdf' in response.headers['Content-Type']:
+        elif "application/pdf" in content_type:
             pdf_content = BytesIO(response.content)
             text = extract_text(pdf_content)
+            logging.info(f"Successfully extracted text from PDF URL: {url}")
             return text
         else:
-            st.error(f"Unsupported content type: {response.headers['Content-Type']}")
+            error_message = f"Unsupported content type: {content_type} for URL: {url}"
+            st.error(error_message)
+            logging.error(error_message)
             return None
     except requests.exceptions.RequestException as e:
-        st.error(f"Error fetching URL: {e}")
+        error_message = f"Error fetching URL: {e} for URL: {url}"
+        st.error(error_message)
+        logging.error(error_message)
         return None
     except Exception as e:
-        st.error(f"Error processing content: {e}")
+        error_message = f"Error processing content: {e} for URL: {url}"
+        st.error(error_message)
+        logging.exception(
+            error_message
+        )  # Log the full traceback, including exception type, stack trace
         return None
+
 
 def validate_structured_advisory(advisory: Dict) -> List[str]:
     """
@@ -224,53 +209,119 @@ def validate_structured_advisory(advisory: Dict) -> List[str]:
     """
     errors = []
 
+    if not isinstance(advisory, dict):
+        errors.append("Advisory is not a dictionary.")
+        return errors  # Stop further checks if it's not a dict
+
     # Check for missing keys
     required_keys = [
-        "Departments", "Task Name", "Task Description", "Sub-Departments",
-        "Regulatory Risk/Theme", "Risk Category ID", "Inherent Risk Rating",
-        "Nature of Mitigation", "Task Frequency Start Date", "Task Frequency End Date",
-        "Compliance Frequency", "Due Date", "D_daysofoccurrence",
-        "W_weeksofoccurrence", "W_dayofweek", "M_weeksofoccurrenceformonthly",
-        "M_dayofweek", "M_monthsofoccurence", "Y_monthofyear", "Y_dayofmonth"
+        "Departments",
+        "Task Name",
+        "Task Description",
+        "Sub-Departments",
+        "Regulatory Risk/Theme",
+        "Risk Category ID",
+        "Inherent Risk Rating",
+        "Nature of Mitigation",
+        "Task Frequency Start Date",
+        "Task Frequency End Date",
+        "Compliance Frequency",
+        "Due Date",
+        "D_daysofoccurrence",
+        "W_weeksofoccurrence",
+        "W_dayofweek",
+        "M_weeksofoccurrenceformonthly",
+        "M_dayofweek",
+        "M_monthsofoccurence",
+        "Y_monthofyear",
+        "Y_dayofmonth",
     ]
     for key in required_keys:
         if key not in advisory:
             errors.append(f"Missing required key: {key}")
 
+    if errors:
+        return errors  # Return early if there are missing keys
+
     # Check for valid values (Example checks.  Extend as needed)
-    valid_departments = ["Administration", "Finance & Accounts", "Training", "Procurement & Commercial",
-                           "Human Resource", "Information Security (InfoSec)", "Information Technology",
-                           "Internal Audit & Risk Management", "Business Operations", "Legal",
-                           "Marketing & Communication", "Mergers & Acquisitions", "Pre Sales & Sales",
-                           "Quality Assurance"]
+    valid_departments = [
+        "Administration",
+        "Finance & Accounts",
+        "Training",
+        "Procurement & Commercial",
+        "Human Resource",
+        "Information Security (InfoSec)",
+        "Information Technology",
+        "Internal Audit & Risk Management",
+        "Business Operations",
+        "Legal",
+        "Marketing & Communication",
+        "Mergers & Acquisitions",
+        "Pre Sales & Sales",
+        "Quality Assurance",
+    ]
     if advisory.get("Departments") not in valid_departments:
         errors.append(f"Invalid Department: {advisory.get('Departments')}")
 
-    valid_sub_departments = ["Operations - Cash Management", "Operations - Trade Services",
-                               "Operations - Custody operations", "Operations - Money Market",
-                               "Operations - FX", "Operations - ALM", "Operations - Retail Banking",
-                               "Operations - Debit/ Credit cards", "Market Risk", "Liquidity Risk",
-                               "Credit Risk", "Operational Risk", "Financial Risk", "Bankwide"]
+    valid_sub_departments = [
+        "Operations - Cash Management",
+        "Operations - Trade Services",
+        "Operations - Custody operations",
+        "Operations - Money Market",
+        "Operations - FX",
+        "Operations - ALM",
+        "Operations - Retail Banking",
+        "Operations - Debit/ Credit cards",
+        "Market Risk",
+        "Liquidity Risk",
+        "Credit Risk",
+        "Operational Risk",
+        "Financial Risk",
+        "Bankwide",
+    ]
     if advisory.get("Sub-Departments") not in valid_sub_departments:
         errors.append(f"Invalid Sub-Department: {advisory.get('Sub-Departments')}")
 
-    valid_regulatory_themes = ["Governance (Prudential and Licensing)", "Information and Technology",
-                                "Market Conduct and Customers", "Financial Crime",
-                                "Employment Practices and Workplace Safety", "Process Enhancement",
-                                 "Conflict of Interest", "Risk"]
+    valid_regulatory_themes = [
+        "Governance (Prudential and Licensing)",
+        "Information and Technology",
+        "Market Conduct and Customers",
+        "Financial Crime",
+        "Employment Practices and Workplace Safety",
+        "Process Enhancement",
+        "Conflict of Interest",
+        "Risk",
+    ]
     if advisory.get("Regulatory Risk/Theme") not in valid_regulatory_themes:
-        errors.append(f"Invalid Regulatory Risk/Theme: {advisory.get('Regulatory Risk/Theme')}")
+        errors.append(
+            f"Invalid Regulatory Risk/Theme: {advisory.get('Regulatory Risk/Theme')}"
+        )
 
-    valid_risk_categories = ["Credit & Financial", "Non Implementation Risk", "Credit Regulatory Risk",
-                               "Reporting Risk", "Conflict of Interest", "Non Compliance Risk", "IT Security Risk"]
+    valid_risk_categories = [
+        "Credit & Financial",
+        "Non Implementation Risk",
+        "Credit Regulatory Risk",
+        "Reporting Risk",
+        "Conflict of Interest",
+        "Non Compliance Risk",
+        "IT Security Risk",
+    ]
     if advisory.get("Risk Category ID") not in valid_risk_categories:
         errors.append(f"Invalid Risk Category ID: {advisory.get('Risk Category ID')}")
 
     valid_risk_ratings = ["Very High", "High", "Medium", "Low"]
     if advisory.get("Inherent Risk Rating") not in valid_risk_ratings:
-        errors.append(f"Invalid Inherent Risk Rating: {advisory.get('Inherent Risk Rating')}")
+        errors.append(
+            f"Invalid Inherent Risk Rating: {advisory.get('Inherent Risk Rating')}"
+        )
 
-    valid_mitigations = ["Policy", "Governance", "Process/controls", "Systems and Technology", "Training"]
+    valid_mitigations = [
+        "Policy",
+        "Governance",
+        "Process/controls",
+        "Systems and Technology",
+        "Training",
+    ]
     if advisory.get("Nature of Mitigation") not in valid_mitigations:
         errors.append(f"Invalid Nature of Mitigation: {advisory.get('Nature of Mitigation')}")
 
@@ -283,23 +334,49 @@ def validate_structured_advisory(advisory: Dict) -> List[str]:
         errors.append(f"Invalid W_dayofweek: {advisory.get('W_dayofweek')}")
 
     valid_weeks = ["First", "Second", "Third", "Fourth", "Last", "Day"]
-    if advisory.get("M_weeksofoccurrenceformonthly") and advisory.get("M_weeksofoccurrenceformonthly") not in valid_weeks:
-        errors.append(f"Invalid M_weeksofoccurrenceformonthly: {advisory.get('M_weeksofoccurrenceformonthly')}")
+    if (
+        advisory.get("M_weeksofoccurrenceformonthly")
+        and advisory.get("M_weeksofoccurrenceformonthly") not in valid_weeks
+    ):
+        errors.append(
+            f"Invalid M_weeksofoccurrenceformonthly: {advisory.get('M_weeksofoccurrenceformonthly')}"
+        )
 
     # Date format validation (basic)
-    date_format = r'\d{1,2}[-./]\d{1,2}[-./]\d{2,4}'
-    if advisory.get("Task Frequency Start Date") and not re.match(date_format, advisory.get("Task Frequency Start Date")):
-        errors.append("Invalid Task Frequency Start Date format. Use DD-MM-YYYY, DD/MM/YYYY, or DD.MM.YYYY")
-    if advisory.get("Task Frequency End Date") and not re.match(date_format, advisory.get("Task Frequency End Date")):
-        errors.append("Invalid Task Frequency End Date format. Use DD-MM-YYYY, DD/MM/YYYY, or DD.MM.YYYY")
-    if advisory.get("Due Date") and not re.match(date_format, advisory.get("Due Date")):
-        errors.append("Invalid Due Date format. Use DD-MM-YYYY, DD/MM/YYYY, or DD.MM.YYYY")
+    date_format = r"\d{1,2}[-./]\d{1,2}[-./]\d{2,4}"
+    if (
+        advisory.get("Task Frequency Start Date")
+        and not re.match(date_format, advisory.get("Task Frequency Start Date"))
+    ):
+        errors.append(
+            "Invalid Task Frequency Start Date format. Use DD-MM-YYYY, DD/MM/YYYY, or DD.MM.YYYY"
+        )
+    if (
+        advisory.get("Task Frequency End Date")
+        and not re.match(date_format, advisory.get("Task Frequency End Date"))
+    ):
+        errors.append(
+            "Invalid Task Frequency End Date format. Use DD-MM-YYYY, DD/MM/YYYY, or DD.MM.YYYY"
+        )
+    if (
+        advisory.get("Due Date")
+        and not re.match(date_format, advisory.get("Due Date"))
+    ):
+        errors.append(
+            "Invalid Due Date format. Use DD-MM-YYYY, DD/MM/YYYY, or DD.MM.YYYY"
+        )
 
     # Check for logical consistency
-    if advisory.get("Compliance Frequency") == "Onetime" and advisory.get("Due Date") == "31-03-2099":
-        errors.append("For 'Onetime' frequency, Due Date should be a specific date, not 31-03-2099.")
+    if (
+        advisory.get("Compliance Frequency") == "Onetime"
+        and advisory.get("Due Date") == "31-03-2099"
+    ):
+        errors.append(
+            "For 'Onetime' frequency, Due Date should be a specific date, not 31-03-2099."
+        )
 
     return errors
+
 
 def main():
     """
@@ -309,13 +386,17 @@ def main():
     st.markdown("Enter an RBI notification URL to generate a structured compliance advisory.")
 
     rbi_url = st.text_input("RBI Notification URL:", "")
-    llm_model = st.selectbox("Choose LLM Model", ["gemini", "groq", "mistral", "openrouter"]) # added model selection
+    llm_model = st.selectbox(
+        "Choose LLM Model", ["gemini", "openrouter"]
+    )  # removed groq and mistral
 
     if rbi_url:
         with st.spinner("Fetching and processing..."):
             extracted_text = extract_text_from_url(rbi_url)
             if extracted_text:
-                structured_advisory = get_structured_advisory(extracted_text, rbi_url, llm_model) # Pass the model
+                structured_advisory = get_structured_advisory(
+                    extracted_text, rbi_url, llm_model
+                )  # Pass the model
                 if structured_advisory:
                     errors = validate_structured_advisory(structured_advisory)
                     if errors:
@@ -324,12 +405,23 @@ def main():
                             st.error(error)
                     else:
                         st.subheader("Generated Compliance Advisory:")
-                        st.json(structured_advisory)  # Display as JSON for easy viewing
+                        st.json(
+                            structured_advisory
+                        )  # Display as JSON for easy viewing
+                        logging.info("Successfully generated and validated advisory.")
                 else:
-                    st.error("Failed to generate structured advisory.  The LLM was unable to process the input.")
+                    st.error(
+                        "Failed to generate structured advisory.  The LLM was unable to process the input."
+                    )
+                    logging.error("LLM failed to generate structured advisory.")
             else:
                 st.error("Failed to extract text from the provided URL.")
-    st.markdown("Note: This application is a prototype and may not be fully accurate.  Always verify compliance requirements with the official RBI documentation.")
+                logging.error("Failed to extract text from URL.")
+
+    st.markdown(
+        "Note: This application is a prototype and may not be fully accurate.  Always verify compliance requirements with the official RBI documentation."
+    )
+
 
 if __name__ == "__main__":
     main()
