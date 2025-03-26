@@ -6,88 +6,178 @@ from pdfminer.high_level import extract_text
 import re
 import json
 import os
+from typing import Optional, Dict, List
 
 # Placeholder for LLM function.  Replace with actual LLM call.
-def get_structured_advisory(extracted_text, rbi_url):
+def get_structured_advisory(extracted_text: str, rbi_url: str, llm_model: str) -> Optional[Dict]:
     """
-    This is a placeholder function.  In a real application, this function
-    would call an LLM (like Gemini, GPT-3, etc.) to structure the
-    extracted text into the RBI Compliance Advisory format.  This placeholder
-    simulates that behavior.
+    This function calls an LLM to structure the extracted text into the
+    RBI Compliance Advisory format.
 
     Args:
         extracted_text (str): The text extracted from the RBI document.
         rbi_url (str): The URL of the RBI document (for context).
+        llm_model (str): The LLM model to use ("gemini", "groq", "mistral", "openrouter").
 
     Returns:
-        dict: A dictionary representing the structured RBI Compliance Advisory.
-              Returns None if it cannot process.
+        Optional[Dict]: A dictionary representing the structured RBI Compliance Advisory,
+                        or None on error.
     """
-    # Simulate LLM processing and potential failure.
     if not extracted_text:
         return None
 
-    # Basic Heuristics (Improved):
-    if "master circular" in extracted_text.lower():
-        regulatory_theme = "Governance (Prudential and Licensing)"
-    elif "information technology" in extracted_text.lower() or "cybersecurity" in extracted_text.lower():
-        regulatory_theme = "Information and Technology"
-    elif "customer service" in extracted_text.lower() or "fair practices" in extracted_text.lower():
-        regulatory_theme = "Market Conduct and Customers"
-    elif "fraud" in extracted_text.lower() or "anti-money laundering" in extracted_text.lower():
-        regulatory_theme = "Financial Crime"
-    elif "human resources" in extracted_text.lower() or "employee" in extracted_text.lower():
-        regulatory_theme = "Employment Practices and Workplace Safety"
-    elif "risk management" in extracted_text.lower():
-        regulatory_theme = "Risk"
+    prompt = f"""
+    You are an expert compliance officer. Analyze the following text from an RBI notification and structure it into a compliance advisory.
+    
+    Text:
+    {extracted_text}
+    
+    URL: {rbi_url}
+    
+    Provide the output in the following JSON format.  Strictly adhere to this format.  If a field cannot be determined from the text, use null, but do not omit any fields.  Do not add any extra text or explanation before or after the JSON.
+    
+    {{
+        "Departments": (Select one from: Administration, Finance & Accounts, Training, Procurement & Commercial, Human Resource, Information Security (InfoSec), Information Technology, Internal Audit & Risk Management, Business Operations, Legal, Marketing & Communication, Mergers & Acquisitions, Pre Sales & Sales, Quality Assurance),
+        "Task Name": (Briefly state the task action, starting with "To...".  If no explicit task, use "To review the notification"),
+        "Task Description": (Clearly and concisely describe the required action, risk mitigation, or bank procedure in simple language.),
+        "Sub-Departments": (Select one from: Operations - Cash Management, Operations - Trade Services, Operations - Custody operations, Operations - Money Market, Operations - FX, Operations - ALM, Operations - Retail Banking, Operations - Debit/ Credit cards, Market Risk, Liquidity Risk, Credit Risk, Operational Risk, Financial Risk, Bankwide),
+        "Regulatory Risk/Theme": (Select one from: Governance (Prudential and Licensing), Information and Technology, Market Conduct and Customers, Financial Crime, Employment Practices and Workplace Safety, Process Enhancement, Conflict of Interest, Risk),
+        "Risk Category ID": (Select one from: Credit & Financial, Non Implementation Risk, Credit Regulatory Risk, Reporting Risk, Conflict of Interest, Non Compliance Risk, IT Security Risk),
+        "Inherent Risk Rating": (Select one from: Very High, High, Medium, Low),
+        "Nature of Mitigation": (Select one from: Policy, Governance, Process/controls, Systems and Technology, Training),
+        "Task Frequency Start Date": (Use '01-04-2024' for recurring tasks, or the 'Notification date' for non-recurring tasks.  Use format DD-MM-YYYY),
+        "Task Frequency End Date": (Use '31-03-2039'. Use format DD-MM-YYYY),
+        "Compliance Frequency": (Select one from: Onetime, Daily, Weekly, Monthly, Yearly),
+        "Due Date": (Use '31-03-2099' for one-time tasks. Use format DD-MM-YYYY),
+        "D_daysofoccurrence": (If Compliance Frequency is 'Daily', specify the occurrence interval, otherwise null),
+        "W_weeksofoccurrence": (If Compliance Frequency is 'Weekly', specify the occurrence interval, otherwise null),
+        "W_dayofweek": (Select one from: Monday, Tuesday, Wednesday, Thursday, Friday, Saturday, Sunday, otherwise null),
+        "M_weeksofoccurrenceformonthly": (Select one from: First, Second, Third, Fourth, Last, Day, otherwise null),
+        "M_dayofweek": (Specify the day of the month for 'Monthly' frequency, otherwise null),
+        "M_monthsofoccurence": (Specify the monthly occurrence interval, otherwise null),
+        "Y_monthofyear": (Specify the month for 'Yearly' frequency, otherwise null),
+        "Y_dayofmonth": (Specify the day of the month for 'Yearly' frequency, otherwise null)
+    }}
+    """
+
+    try:
+        if llm_model == "gemini":
+            #  Replace with actual Gemini API call
+            # Example (Conceptual):
+            # response = google_gemini_api.generate_text(prompt=prompt)
+            # return json.loads(response.text)
+            return simulate_llm_response(prompt) # Keep the simulation for now.
+
+        elif llm_model == "groq":
+            # Replace with actual Groq API call
+            # response = groq_client.generate_text(prompt=prompt)
+            # return json.loads(response.text)
+             return simulate_llm_response(prompt) # Keep the simulation for now.
+
+        elif llm_model == "mistral":
+            # Replace with actual Mistral API call
+            # response = mistral_client.generate_text(prompt=prompt)
+            # return json.loads(response.text)
+            return simulate_llm_response(prompt) # Keep the simulation for now.
+
+        elif llm_model == "openrouter":
+            # Replace with actual Openrouter API call
+            # response = openrouter_client.complete(prompt=prompt)
+            # return json.loads(response.text)
+            return simulate_llm_response(prompt) # Keep the simulation for now.
+
+        else:
+            raise ValueError(f"Unsupported LLM model: {llm_model}")
+    except Exception as e:
+        st.error(f"LLM API Error: {e}")
+        return None
+
+def simulate_llm_response(prompt: str) -> Optional[Dict]:
+    """
+    Simulates the response from an LLM.  This should be replaced with
+    actual LLM API calls.
+
+    Args:
+        prompt (str): The prompt sent to the LLM.
+
+    Returns:
+        Optional[Dict]: A simulated LLM response.
+    """
+    # This is a placeholder.  A real LLM will provide much better results.
+    if "fraud" in prompt.lower():
+        return {
+            "Departments": "Internal Audit & Risk Management",
+            "Task Name": "To implement fraud prevention measures",
+            "Task Description": "Establish and maintain controls to prevent and detect fraudulent activities as per RBI guidelines.",
+            "Sub-Departments": "Bankwide",
+            "Regulatory Risk/Theme": "Financial Crime",
+            "Risk Category ID": "Non Compliance Risk",
+            "Inherent Risk Rating": "High",
+            "Nature of Mitigation": "Process/controls",
+            "Task Frequency Start Date": "01-04-2024",
+            "Task Frequency End Date": "31-03-2039",
+            "Compliance Frequency": "Monthly",
+            "Due Date": None,
+            "D_daysofoccurrence": None,
+            "W_weeksofoccurrence": None,
+            "W_dayofweek": None,
+            "M_weeksofoccurrenceformonthly": "Last",
+            "M_dayofweek": "Friday",
+            "M_monthsofoccurence": 1,
+            "Y_monthofyear": None,
+            "Y_dayofmonth": None
+        }
+    elif "customer service" in prompt.lower():
+        return {
+            "Departments": "Business Operations",
+            "Task Name": "To enhance customer service standards",
+            "Task Description": "Improve customer service in accordance with RBI directives on customer grievance redressal.",
+            "Sub-Departments": "Operations - Retail Banking",
+            "Regulatory Risk/Theme": "Market Conduct and Customers",
+            "Risk Category ID": "Non Compliance Risk",
+            "Inherent Risk Rating": "Medium",
+            "Nature of Mitigation": "Training",
+            "Task Frequency Start Date": "01-04-2024",
+            "Task Frequency End Date": "31-03-2039",
+            "Compliance Frequency": "Yearly",
+            "Due Date": None,
+            "D_daysofoccurrence": None,
+            "W_weeksofoccurrence": None,
+            "W_dayofweek": None,
+            "M_weeksofoccurrenceformonthly": None,
+            "M_dayofweek": None,
+            "M_monthsofoccurence": None,
+            "Y_monthofyear": "March",
+            "Y_dayofmonth": 31
+        }
+
+    elif "master circular" in prompt.lower():
+        return {
+            "Departments": "Legal",
+            "Task Name": "To review master circular",
+            "Task Description": "Review and implement changes mandated by the RBI master circular on loans and advances.",
+            "Sub-Departments": "Credit Risk",
+            "Regulatory Risk/Theme": "Governance (Prudential and Licensing)",
+            "Risk Category ID": "Credit Regulatory Risk",
+            "Inherent Risk Rating": "High",
+            "Nature of Mitigation": "Policy",
+            "Task Frequency Start Date": "15-05-2024",
+            "Task Frequency End Date": "31-03-2039",
+            "Compliance Frequency": "Onetime",
+            "Due Date": "30-06-2024",
+            "D_daysofoccurrence": None,
+            "W_weeksofoccurrence": None,
+            "W_dayofweek": None,
+            "M_weeksofoccurrenceformonthly": None,
+            "M_dayofweek": None,
+            "M_monthsofoccurence": None,
+            "Y_monthofyear": None,
+            "Y_dayofmonth": None
+        }
     else:
-        regulatory_theme = "Governance (Prudential and Licensing)"  # Default
+        return None
 
-    # More robust keyword search for task name
-    task_name_keywords = ["comply with", "implement", "ensure", "submit", "report", "review", "establish", "maintain", "update", "provide"]
-    found_task_name = None
-    for keyword in task_name_keywords:
-        match = re.search(rf"(?:to\s+)?{keyword}\s+([^\n\r.]*)", extracted_text, re.IGNORECASE)
-        if match:
-            found_task_name = "To " + match.group(1).strip()
-            break
-    if not found_task_name:
-        found_task_name = "To review the notification" # default
-
-    # Even more robust date extraction
-    dates = re.findall(r'(\d{1,2}[-./]\d{1,2}[-./]\d{2,4})', extracted_text) # Finds all date-like strings
-    notification_date = None
-    if dates:
-        notification_date = dates[0]  # Take the first date found.
-    else:
-        notification_date = "01-04-2024" # Default if no date
-
-    # Create a sample structured advisory (Improved)
-    structured_advisory = {
-        "Departments": "Administration",
-        "Task Name": found_task_name,
-        "Task Description": f"Review and implement the guidelines outlined in the RBI notification dated {notification_date}.  Refer to the RBI URL for detailed instructions.",
-        "Sub-Departments": "Bankwide",
-        "Regulatory Risk/Theme": regulatory_theme,
-        "Risk Category ID": "Non Compliance Risk",
-        "Inherent Risk Rating": "Medium",
-        "Nature of Mitigation": "Policy",
-        "Task Frequency Start Date": notification_date,
-        "Task Frequency End Date": "31-03-2039",
-        "Compliance Frequency": "Onetime",
-        "Due Date": "31-03-2099",
-        "D_daysofoccurrence": None,
-        "W_weeksofoccurrence": None,
-        "W_dayofweek": None,
-        "M_weeksofoccurrenceformonthly": None,
-        "M_dayofweek": None,
-        "M_monthsofoccurence": None,
-        "Y_monthofyear": None,
-        "Y_dayofmonth": None,
-    }
-    return structured_advisory
-
-def extract_text_from_url(url):
+def extract_text_from_url(url: str) -> Optional[str]:
     """
     Extracts text from a given URL, handling both HTML and PDF content.
 
@@ -95,7 +185,7 @@ def extract_text_from_url(url):
         url (str): The URL to extract text from.
 
     Returns:
-        str: The extracted text, or None on error.
+        Optional[str]: The extracted text, or None on error.
     """
     try:
         response = requests.get(url, timeout=10)  # Increased timeout
@@ -122,7 +212,7 @@ def extract_text_from_url(url):
         st.error(f"Error processing content: {e}")
         return None
 
-def validate_structured_advisory(advisory):
+def validate_structured_advisory(advisory: Dict) -> List[str]:
     """
     Validates the structure and content of the generated RBI Compliance Advisory.
 
@@ -130,7 +220,7 @@ def validate_structured_advisory(advisory):
         advisory (dict): The advisory to validate.
 
     Returns:
-        list: A list of error messages.  Empty list if valid.
+        List[str]: A list of error messages.  Empty list if valid.
     """
     errors = []
 
@@ -219,12 +309,13 @@ def main():
     st.markdown("Enter an RBI notification URL to generate a structured compliance advisory.")
 
     rbi_url = st.text_input("RBI Notification URL:", "")
+    llm_model = st.selectbox("Choose LLM Model", ["gemini", "groq", "mistral", "openrouter"]) # added model selection
 
     if rbi_url:
         with st.spinner("Fetching and processing..."):
             extracted_text = extract_text_from_url(rbi_url)
             if extracted_text:
-                structured_advisory = get_structured_advisory(extracted_text, rbi_url)
+                structured_advisory = get_structured_advisory(extracted_text, rbi_url, llm_model) # Pass the model
                 if structured_advisory:
                     errors = validate_structured_advisory(structured_advisory)
                     if errors:
@@ -242,4 +333,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
