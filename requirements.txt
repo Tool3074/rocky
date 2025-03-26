@@ -3,5 +3,7 @@ requests
 beautifulsoup4
 pdfminer.six
 google-generativeai
-openai 
+groq >= 0.4.0 # Specify a version that supports JSON mode
+mistralai >= 0.1.4 # Specify a version that supports JSON mode
+openai >= 1.0 # For OpenRouter (uses OpenAI client library)
 python-dotenv
