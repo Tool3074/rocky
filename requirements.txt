@@ -3,3 +3,5 @@ requests
 beautifulsoup4
 pdfminer.six
 google-generativeai
+openai 
+python-dotenv
