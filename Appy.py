@@ -5,7 +5,7 @@ from pdfminer.high_level import extract_text
 import google.generativeai as genai
 from groq import Groq, RateLimitError as GroqRateLimitError, APIError as GroqAPIError
 from mistralai.client import MistralClient
-from mistralai.models.chat_completion import ChatMessage
+#from mistralai.models.chat_completion import ChatMessage
 from mistralai.exceptions import MistralAPIException, MistralConnectionException
 from openai import OpenAI, RateLimitError as OpenAIRateLimitError, APIError as OpenAIAPIError # For OpenRouter
 import json
@@ -217,10 +217,14 @@ def generate_with_mistral(prompt, api_key, model_name):
         client = MistralClient(api_key=api_key)
         chat_response = client.chat(
             model=model_name,
-            messages=[ChatMessage(role="user", content=prompt)],
+            # Use a list of dictionaries directly
+            messages=[{"role": "user", "content": prompt}],
             temperature=0.2,
             response_format={"type": "json_object"},
         )
+        # Handle potential empty choices list
+        if not chat_response.choices:
+             raise Exception("Mistral API returned an empty 'choices' list.")
         return chat_response.choices[0].message.content
     except MistralAPIException as e:
         logging.error(f"Mistral API Error: Status Code: {e.status_code}, Message: {e.message}")
@@ -232,6 +236,9 @@ def generate_with_mistral(prompt, api_key, model_name):
          raise # Re-raise connection errors
     except Exception as e:
         logging.error(f"Mistral General Error: {e}")
+        # Add more specific error checking if needed
+        if "'choices'" in str(e): # Example check if choices was the issue
+             st.error(f"Mistral API response structure issue: {e}")
         raise
 
 def generate_with_openrouter(prompt, api_key, model_name):
