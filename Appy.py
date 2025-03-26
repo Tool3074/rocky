@@ -5,7 +5,7 @@ from pdfminer.high_level import extract_text
 import google.generativeai as genai
 from groq import Groq, RateLimitError as GroqRateLimitError, APIError as GroqAPIError
 from mistralai.client import MistralClient
-from mistralai.exceptions import MistralAPIException, MistralConnectionException
+from mistralai import MistralAPIException, MistralConnectionException
 import json
 import io
 import logging
