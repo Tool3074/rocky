@@ -193,12 +193,6 @@ def generate_compliance_advisory(text, paragraphs):
     except Exception as e:
         st.error(f"Error during LLM generation: {e}")
         logging.error(f"Error during LLM generation: {e}")
-        # You might want to inspect `response.prompt_feedback` here for specific issues like blocked prompts
-        # try:
-        #    st.warning(f"Prompt Feedback: {response.prompt_feedback}")
-        #    logging.warning(f"Prompt Feedback: {response.prompt_feedback}")
-        # except Exception:
-        #    pass # Ignore if feedback isn't available
         return None
 
 # --- Streamlit App ---
