@@ -1,14 +1,3 @@
-To implement the feature where the agent refers to specific paragraphs from a given URL, we can enhance the existing code to include paragraph-level references. Here's a step-by-step approach to achieve this:
-
-1. **Extract Paragraphs**: Modify the `extract_html_text` function to keep track of individual paragraphs and their positions.
-
-2. **Reference Paragraphs**: When generating the compliance advisory, include references to the specific paragraphs that were used to derive the information.
-
-3. **Display Paragraph References**: Update the Streamlit app to display these references alongside the generated advisory.
-
-Here's how you can modify the code to include these features:
-
-```python
 import streamlit as st
 import requests
 from bs4 import BeautifulSoup
@@ -317,11 +306,3 @@ if st.button("Generate Advisory"):
 # --- Footer/Instructions ---
 st.markdown("---")
 st.markdown("Created with Streamlit and Google Gemini.")
-```
-
-### Key Changes:
-1. **Extract Paragraphs**: The `extract_html_text` function now returns a list of paragraphs along with the full text.
-2. **Reference Paragraphs**: The `generate_compliance_advisory` function includes a "References" field in the JSON output to list the paragraphs used.
-3. **Display Paragraph References**: The Streamlit app displays the referenced paragraphs alongside the generated advisory.
-
-This approach ensures that the generated advisory is transparent and traceable back to the original content.
